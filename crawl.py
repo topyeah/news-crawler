@@ -10,9 +10,9 @@ import time
 # =====================【自行修改】=====================
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21cc-4faf-a1b6-e47801d32d0d"
 HISTORY_FILE = "history.txt"
-MAX_CRAWL = 8   # 降低条数，减少请求数量，防止长时间运行
+MAX_CRAWL = 8
 PAGE_TIMEOUT = 12
-TOTAL_RUN_SECONDS = 240  # 整体脚本最长运行4分钟，超时自动终止
+TOTAL_RUN_SECONDS = 240
 # =====================================================
 
 HEADERS = {
@@ -23,7 +23,6 @@ HEADERS = {
 start_time = time.time()
 
 def is_timeout():
-    """全局超时判断"""
     return time.time() - start_time > TOTAL_RUN_SECONDS
 
 def load_history() -> set:
@@ -65,17 +64,33 @@ def send_wecom_message(content):
         print("推送失败：", str(e))
 
 def get_article_summary(url):
+    """
+    新逻辑：优先meta description，兜底正文首段
+    不再依赖废弃的 article-lead
+    """
     if is_timeout():
         return "脚本整体超时，放弃获取摘要"
     try:
         resp = requests.get(url, headers=HEADERS, timeout=PAGE_TIMEOUT)
         soup = BeautifulSoup(resp.text, "html.parser")
-        summary_tag = soup.find("p", class_="article-lead")
-        if summary_tag:
-            summary = summary_tag.get_text(strip=True)
+
+        # 方案1：优先抓取meta描述（网站官方摘要，稳定性最强）
+        meta_desc = soup.find("meta", attrs={"name":"description"})
+        if meta_desc and meta_desc.get("content"):
+            summary = meta_desc["content"].strip()
             if len(summary) > 160:
                 summary = summary[:160] + "……"
             return summary
+
+        # 方案2：兜底，抓取页面第一个正文段落
+        all_p = soup.find_all("p")
+        for p in all_p:
+            text = p.get_text(strip=True)
+            if len(text) > 30:
+                if len(text) > 160:
+                    text = text[:160] + "……"
+                return text
+
         return "无摘要"
     except Exception as e:
         print(f"获取摘要失败 {url}: {str(e)}")
@@ -112,7 +127,7 @@ def crawl_zaobao():
                 item["summary"] = summary
                 item["source"] = "联合早报"
                 news_list.append(item)
-                time.sleep(0.4)  # 增加轻微延时，防止高频访问封禁
+                time.sleep(0.4)
         print(f"最终组装完成新闻条数：{len(news_list)}")
     except Exception as e:
         print("联合早报抓取异常：", str(e))
