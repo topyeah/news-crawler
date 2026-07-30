@@ -13,7 +13,7 @@ HISTORY_FILE = "history.txt"
 MAX_CRAWL = 8
 PAGE_TIMEOUT = 12
 TOTAL_RUN_SECONDS = 240
-MAX_SUMMARY_LEN = 600    # 修改为600字符
+MAX_SUMMARY_LEN = 600
 MIN_PARAGRAPH_LEN = 40
 # =====================================================
 
@@ -85,15 +85,13 @@ def get_article_summary(url):
                 summary = summary[:MAX_SUMMARY_LEN] + "……"
             return summary
 
-        # 方案2：拼接多个正文段落（优化升级：不再只取单段）
+        # 方案2：拼接多个正文段落
         content_text = ""
         all_p = soup.find_all("p")
         for p in all_p:
             para = clean_text(p.get_text())
-            # 过滤过短无效段落
             if len(para) >= MIN_PARAGRAPH_LEN:
                 content_text += para + " "
-                # 提前终止，避免抓取过多内容
                 if len(content_text) >= MAX_SUMMARY_LEN + 100:
                     break
 
@@ -161,8 +159,8 @@ if __name__ == "__main__":
     if len(new_news) > 0:
         msg = f"【联合早报·中国新闻汇总】{time_now}\n\n"
         for n in new_news:
-            block = f"【{n['title']}】\n{n['summary']}\n{n['url']}\n\n"
-            # 企微消息总长度保护阈值
+            # 已移除标题，只保留摘要+链接
+            block = f"{n['summary']}\n{n['url']}\n\n"
             if len(msg + block) > 1900:
                 msg += "……内容较多，剩余新闻省略"
                 break
