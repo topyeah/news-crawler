@@ -10,7 +10,7 @@ import time
 # =====================【自行修改配置区】=====================
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21cc-4faf-a1b6-e47801d32d0d"
 HISTORY_FILE = "history.txt"
-MAX_CRAWL = 8
+MAX_CRAWL = 40        # 【重点】上调最大抓取新闻数量，按需修改
 PAGE_TIMEOUT = 12
 TOTAL_RUN_SECONDS = 240
 MAX_SUMMARY_LEN = 300
@@ -146,6 +146,7 @@ def crawl_zaobao():
             if is_timeout():
                 print("【警告】运行超时，停止继续抓取")
                 break
+            # 这里使用MAX_CRAWL控制总量
             if item["url"] not in seen and len(news_list) < MAX_CRAWL:
                 seen.add(item["url"])
                 summary, pub_time = get_article_summary(item["url"])
