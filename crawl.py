@@ -16,6 +16,7 @@ TOTAL_RUN_SECONDS = 240
 MAX_SUMMARY_LEN = 300
 MIN_PARAGRAPH_LEN = 40
 NEWS_VALID_DAYS = 7  # 只抓取7天内新闻
+SAFE_MSG_LIMIT = 1600  # 单条消息字符上限
 # ===========================================================
 
 HEADERS = {
@@ -56,22 +57,28 @@ def send_wecom_message(content):
     }
     headers = {"Content-Type":"application/json;charset=utf-8"}
     try:
-        res = requests.post(WEBHOOK_URL, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers=headers, timeout=15)
+        res = requests.post(
+            WEBHOOK_URL,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+            timeout=15
+        )
+        print(f"【推送HTTP状态码】{res.status_code}")
         print("【推送返回】", res.text)
+        # 多条推送间隔0.8秒，防止风控
+        time.sleep(0.8)
     except Exception as e:
-        print("【推送失败】", str(e))
+        print("【推送异常】", str(e))
 
 def clean_text(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 def parse_news_datetime(soup):
-    """解析发布时间，统一转为无时区datetime用于比较"""
     meta_time = soup.find("meta", property="article:published_time")
     if meta_time and meta_time.get("content"):
         try:
             dt_str = meta_time["content"].strip()
-            # 去除时区标识，统一本地时间对比
             pure_dt_str = dt_str.replace("Z","").split("+")[0]
             pub_dt = datetime.fromisoformat(pure_dt_str)
             return pub_dt
@@ -87,7 +94,6 @@ def get_article_summary(url):
         soup = BeautifulSoup(resp.text, "html.parser")
         pub_datetime = parse_news_datetime(soup)
 
-        # 优先meta description
         meta_desc = soup.find("meta", attrs={"name":"description"})
         if meta_desc and meta_desc.get("content"):
             summary = clean_text(meta_desc["content"])
@@ -95,7 +101,6 @@ def get_article_summary(url):
                 summary = summary[:MAX_SUMMARY_LEN] + "……"
             return summary, pub_datetime
 
-        # 兜底：拼接正文段落
         content_text = ""
         all_p = soup.find_all("p")
         for p in all_p:
@@ -144,7 +149,6 @@ def crawl_zaobao():
             if item["url"] not in seen and len(news_list) < MAX_CRAWL:
                 seen.add(item["url"])
                 summary, pub_time = get_article_summary(item["url"])
-                # 时间过滤：有时间并且早于截止日期则丢弃
                 if pub_time is not None and pub_time < deadline:
                     print(f"新闻超出时效，舍弃 {item['url']} 发布时间:{pub_time}")
                     time.sleep(0.4)
@@ -162,7 +166,6 @@ if __name__ == "__main__":
     history_set = load_history()
     raw_news = crawl_zaobao()
 
-    # 过滤已经推送过的新闻
     new_news = []
     new_urls = []
     for item in raw_news:
@@ -171,26 +174,25 @@ if __name__ == "__main__":
             new_urls.append(item["url"])
     print(f"过滤历史推送记录，待推送新增新闻：{len(new_news)} 条")
 
-    # ========== 核心：按发布时间【从新到旧排序】，pubtime=None放最后 ==========
+    # 按发布时间从新到旧排序
     new_news.sort(key=lambda x: x["pubtime"] if x["pubtime"] is not None else datetime.min, reverse=True)
 
     time_now = datetime.now().strftime("%m-%d")
-    if len(new_news) > 0:
-        msg = f"【联合早报·中国新闻汇总】{time_now}\n\n"
-        for n in new_news:
-            # 格式化发布时间
-            if n["pubtime"]:
-                pub_str = n["pubtime"].strftime("%Y-%m-%d %H:%M")
-            else:
-                pub_str = "未知发布时间"
-            block = f"🕒{pub_str}\n{n['summary']}\n{n['url']}\n\n"
-            # 企微消息长度保护
-            if len(msg + block) > 1900:
-                msg += "……内容较多，剩余新闻省略"
-                break
-            msg += block
-    else:
-        msg = f"【联合早报·中国新闻汇总】{time_now}\n暂无新增新闻"
+    header = f"【联合早报·中国新闻汇总】{time_now}\n\n"
 
-    send_wecom_message(msg)
+    if len(new_news) > 0:
+        batch_msg = header
+        for n in new_news:
+            # 移除发布时间，仅保留摘要+链接
+            block = f"{n['summary']}\n{n['url']}\n\n"
+            # 判断追加后是否超限，超限先发送当前批次，新建消息
+            if len(batch_msg + block) > SAFE_MSG_LIMIT:
+                send_wecom_message(batch_msg)
+                batch_msg = header
+            batch_msg += block
+        # 发送最后剩余批次
+        send_wecom_message(batch_msg)
+    else:
+        send_wecom_message(f"【联合早报·中国新闻汇总】{time_now}\n暂无新增新闻")
+
     save_new_history(new_urls)
