@@ -9,9 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
       - name: Install dependencies
         run: pip3 install requests beautifulsoup4
-
       - name: Run crawl script
         run: python3 crawl.py
