@@ -8,12 +8,11 @@ import os
 
 # =====================【仅需修改此处】=====================
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21cc-4faf-a1b6-e47801d32d0d"
-# 目标网站：联合早报、厦门网新闻频道
 TARGET_WEBSITES = [
-    {"name": "联合早报", "url": "http://www.zaobao.com/"},
+    {"name": "联合早报", "url": "https://www.zaobao.com.sg/"},
     {"name": "厦门网", "url": "https://news.xmnn.cn/xmxw/"}
 ]
-HISTORY_FILE = "history.txt"  # 存储已推送新闻链接
+HISTORY_FILE = "history.txt"
 # =========================================================
 
 HEADERS = {
@@ -23,12 +22,10 @@ HEADERS = {
 
 all_news = []
 now = datetime.now()
-# 筛选区间：北京时间 昨日00:00 ~ 今日08:00
 today_8am = datetime(now.year, now.month, now.day, 8, 0, 0)
 yesterday_0am = today_8am - timedelta(days=1)
 
 def load_history() -> set:
-    """读取历史已推送链接集合"""
     history = set()
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
@@ -39,7 +36,6 @@ def load_history() -> set:
     return history
 
 def save_new_history(new_url_list: list):
-    """追加新链接到历史文件"""
     if not new_url_list:
         return
     with open(HISTORY_FILE, "a", encoding="utf-8") as f:
@@ -47,7 +43,6 @@ def save_new_history(new_url_list: list):
             f.write(url + "\n")
 
 def send_wecom_message(content):
-    """推送消息至企业微信群机器人，修复中文乱码"""
     payload = {
         "msgtype": "text",
         "text": {"content": content}
@@ -62,13 +57,16 @@ def send_wecom_message(content):
     print("推送结果：", res.text)
 
 def fetch_zaobao(url):
-    """抓取联合早报新闻"""
+    """抓取联合早报新闻【调试增强版】"""
     news = []
     try:
+        print(f"开始抓取联合早报：{url}")
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.encoding = "utf-8"
+        print("早报状态码：", resp.status_code)
         soup = BeautifulSoup(resp.text, "html.parser")
         items = soup.select("a.list-block")
+        print(f"早报匹配到list-block数量：{len(items)}")
         for item in items:
             title_tag = item.select_one(".f18")
             time_tag = item.select_one(".text-tip-color")
@@ -78,25 +76,31 @@ def fetch_zaobao(url):
             pub_str = time_tag.get_text(strip=True)
             link = item.get("href")
             if not link.startswith("http"):
-                link = "https://www.zaobao.com" + link
+                link = "https://www.zaobao.com.sg" + link
+            print(f"早报条目：{title} | 时间：{pub_str} | {link}")
             match = re.search(r"(\d{1,2})-(\d{1,2})", pub_str)
             if match:
                 month, day = int(match.group(1)), int(match.group(2))
                 pub_time = datetime(now.year, month, day)
-                if yesterday_0am <= pub_time <= today_8am:
-                    news.append({"title": title, "url": link, "source": "联合早报"})
+                # =====调试：临时放开时间判断，先收集所有新闻=====
+                news.append({"title": title, "url": link, "source": "联合早报"})
+                #if yesterday_0am <= pub_time <= today_8am:
+                #    news.append({"title": title, "url": link, "source": "联合早报"})
     except Exception as e:
         print("联合早报抓取异常：", str(e))
     return news
 
 def fetch_xmnn(url):
-    """抓取厦门网新闻"""
+    """抓取厦门网新闻【调试增强版】"""
     news = []
     try:
+        print(f"开始抓取厦门网：{url}")
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.encoding = "utf-8"
+        print("厦门网状态码：", resp.status_code)
         soup = BeautifulSoup(resp.text, "html.parser")
         items = soup.select("li")
+        print(f"厦门网匹配li标签总数：{len(items)}")
         for item in items:
             a_tag = item.select_one("a")
             span_time = item.select_one("span")
@@ -109,21 +113,22 @@ def fetch_xmnn(url):
                 continue
             if not link.startswith("http"):
                 link = "https://news.xmnn.cn" + link
+            print(f"厦门网条目：{title} | 时间：{pub_str} | {link}")
             match = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", pub_str)
             if match:
                 y, m, d = int(match.group(1)), int(match.group(2)), int(match.group(3))
                 pub_time = datetime(y, m, d)
-                if yesterday_0am <= pub_time <= today_8am:
-                    news.append({"title": title, "url": link, "source": "厦门网"})
+                # =====调试：临时放开时间判断=====
+                news.append({"title": title, "url": link, "source": "厦门网"})
+                #if yesterday_0am <= pub_time <= today_8am:
+                #    news.append({"title": title, "url": link, "source": "厦门网"})
     except Exception as e:
         print("厦门网抓取异常：", str(e))
     return news
 
 # 主逻辑
 if __name__ == "__main__":
-    # 加载历史链接
     history_set = load_history()
-    # 抓取资讯
     for site in TARGET_WEBSITES:
         if site["name"] == "联合早报":
             res = fetch_zaobao(site["url"])
@@ -131,15 +136,15 @@ if __name__ == "__main__":
             res = fetch_xmnn(site["url"])
         all_news.extend(res)
 
-    # 去重：过滤已经推送过的新闻
+    print(f"总共抓取原始新闻数量：{len(all_news)}")
     new_news = []
     new_urls = []
     for item in all_news:
         if item["url"] not in history_set:
             new_news.append(item)
             new_urls.append(item["url"])
+    print(f"去重后待推送新闻数量：{len(new_news)}")
 
-    # 组装消息
     if len(new_news) > 0:
         msg = f"【每日新闻汇总｜{yesterday_0am.strftime('%m-%d 00:00')} ~ {today_8am.strftime('%m-%d 08:00')}资讯】\n\n"
         for n in new_news:
@@ -147,9 +152,6 @@ if __name__ == "__main__":
     else:
         msg = f"【每日新闻汇总｜{yesterday_0am.strftime('%m-%d 00:00')} ~ {today_8am.strftime('%m-%d 08:00')}】未抓取到新增新闻"
 
-    # 推送
     send_wecom_message(msg)
-
-    # 保存本次新链接，提交回仓库实现持久化
     if new_urls:
         save_new_history(new_urls)
