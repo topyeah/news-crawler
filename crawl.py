@@ -10,13 +10,13 @@ import time
 # =====================【自行修改配置区】=====================
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21cc-4faf-a1b6-e47801d32d0d"
 HISTORY_FILE = "history.txt"
-MAX_CRAWL = 40        # 【重点】上调最大抓取新闻数量，按需修改
-PAGE_TIMEOUT = 12
-TOTAL_RUN_SECONDS = 240
+MAX_CRAWL = 20
+PAGE_TIMEOUT = 6       # 缩短超时，避免长时间卡死
+TOTAL_RUN_SECONDS = 220
 MAX_SUMMARY_LEN = 300
 MIN_PARAGRAPH_LEN = 40
-NEWS_VALID_DAYS = 7  # 只抓取7天内新闻
-SAFE_MSG_LIMIT = 1600  # 单条消息字符上限
+NEWS_VALID_DAYS = 7
+SAFE_MSG_LIMIT = 1600
 # ===========================================================
 
 HEADERS = {
@@ -61,12 +61,11 @@ def send_wecom_message(content):
             WEBHOOK_URL,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers=headers,
-            timeout=15
+            timeout=10
         )
         print(f"【推送HTTP状态码】{res.status_code}")
         print("【推送返回】", res.text)
-        # 多条推送间隔0.8秒，防止风控
-        time.sleep(0.8)
+        time.sleep(0.6)
     except Exception as e:
         print("【推送异常】", str(e))
 
@@ -83,7 +82,7 @@ def parse_news_datetime(soup):
             pub_dt = datetime.fromisoformat(pure_dt_str)
             return pub_dt
         except Exception as e:
-            print("时间解析异常:", e)
+            return None
     return None
 
 def get_article_summary(url):
@@ -116,7 +115,7 @@ def get_article_summary(url):
 
         return "无摘要", pub_datetime
     except Exception as e:
-        print(f"获取摘要失败 {url}: {str(e)}")
+        print(f"【详情页访问失败】{url} 错误:{str(e)}")
         return "摘要获取失败", None
 
 def crawl_zaobao():
@@ -124,7 +123,7 @@ def crawl_zaobao():
     target_url = "https://www.zaobao.com.sg/news/china"
     news_list = []
     try:
-        resp = requests.get(target_url, headers=HEADERS, timeout=PAGE_TIMEOUT)
+        resp = requests.get(target_url, headers=HEADERS, timeout=8)
         print(f"首页请求状态码：{resp.status_code}")
         soup = BeautifulSoup(resp.text, "html.parser")
         all_a = soup.find_all("a")
@@ -142,23 +141,22 @@ def crawl_zaobao():
 
         seen = set()
         deadline = datetime.now() - timedelta(days=NEWS_VALID_DAYS)
-        for item in temp_links:
+        for idx, item in enumerate(temp_links):
             if is_timeout():
-                print("【警告】运行超时，停止继续抓取")
+                print("【警告】全局运行超时，停止抓取新闻详情")
                 break
-            # 这里使用MAX_CRAWL控制总量
             if item["url"] not in seen and len(news_list) < MAX_CRAWL:
                 seen.add(item["url"])
+                print(f"正在抓取第{idx+1}条详情：{item['url']}")
                 summary, pub_time = get_article_summary(item["url"])
                 if pub_time is not None and pub_time < deadline:
-                    print(f"新闻超出时效，舍弃 {item['url']} 发布时间:{pub_time}")
-                    time.sleep(0.4)
+                    print(f"新闻超出时效，舍弃 {item['url']}")
                     continue
                 item["summary"] = summary
                 item["pubtime"] = pub_time
                 news_list.append(item)
-                time.sleep(0.4)
-        print(f"经过时效筛选后，有效新闻条数：{len(news_list)}")
+                time.sleep(0.3)
+        print(f"====抓取完成！经过时效筛选后，有效新闻条数：{len(news_list)}====")
     except Exception as e:
         print("首页抓取异常：", str(e))
     return news_list
@@ -181,19 +179,18 @@ if __name__ == "__main__":
     time_now = datetime.now().strftime("%m-%d")
     header = f"【联合早报·中国新闻汇总】{time_now}\n\n"
 
+    print("====开始执行消息推送====")
     if len(new_news) > 0:
         batch_msg = header
         for n in new_news:
-            # 移除发布时间，仅保留摘要+链接
             block = f"{n['summary']}\n{n['url']}\n\n"
-            # 判断追加后是否超限，超限先发送当前批次，新建消息
             if len(batch_msg + block) > SAFE_MSG_LIMIT:
                 send_wecom_message(batch_msg)
                 batch_msg = header
             batch_msg += block
-        # 发送最后剩余批次
         send_wecom_message(batch_msg)
     else:
         send_wecom_message(f"【联合早报·中国新闻汇总】{time_now}\n暂无新增新闻")
+    print("====推送全部完成====")
 
     save_new_history(new_urls)
