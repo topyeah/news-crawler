@@ -2,20 +2,21 @@
 import requests
 import re
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
 import time
 
-# =====================【自行修改】=====================
-WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21cc-4faf-a1b6-e47801d32d0d"
+# =====================【自行修改配置区】=====================
+WEBHOOK_URL = "填入企业微信机器人webhook"
 HISTORY_FILE = "history.txt"
 MAX_CRAWL = 8
 PAGE_TIMEOUT = 12
 TOTAL_RUN_SECONDS = 240
-MAX_SUMMARY_LEN = 300   # 调整为最多300字符
+MAX_SUMMARY_LEN = 300
 MIN_PARAGRAPH_LEN = 40
-# =====================================================
+NEWS_VALID_DAYS = 7  # 只抓取7天内新闻
+# ===========================================================
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -37,7 +38,7 @@ def load_history() -> set:
                     history.add(url)
         print(f"【加载历史记录】一共 {len(history)} 条已推送链接")
     else:
-        print("【加载历史记录】history.txt 不存在，历史为空")
+        print("【加载历史记录】history.txt 不存在")
     return history
 
 def save_new_history(new_url_list: list):
@@ -55,37 +56,46 @@ def send_wecom_message(content):
     }
     headers = {"Content-Type":"application/json;charset=utf-8"}
     try:
-        res = requests.post(
-            WEBHOOK_URL,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers=headers,
-            timeout=15
-        )
-        print("推送返回：", res.text)
+        res = requests.post(WEBHOOK_URL, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers=headers, timeout=15)
+        print("【推送返回】", res.text)
     except Exception as e:
-        print("推送失败：", str(e))
+        print("【推送失败】", str(e))
 
 def clean_text(text: str) -> str:
-    """清洗文本：去除多余空格、换行"""
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
+def parse_news_datetime(soup):
+    """解析发布时间，统一转为无时区datetime用于比较"""
+    meta_time = soup.find("meta", property="article:published_time")
+    if meta_time and meta_time.get("content"):
+        try:
+            dt_str = meta_time["content"].strip()
+            # 去除时区标识，统一本地时间对比
+            pure_dt_str = dt_str.replace("Z","").split("+")[0]
+            pub_dt = datetime.fromisoformat(pure_dt_str)
+            return pub_dt
+        except Exception as e:
+            print("时间解析异常:", e)
+    return None
+
 def get_article_summary(url):
     if is_timeout():
-        return "脚本整体超时，放弃获取摘要"
+        return "脚本整体超时，放弃获取摘要", None
     try:
         resp = requests.get(url, headers=HEADERS, timeout=PAGE_TIMEOUT)
         soup = BeautifulSoup(resp.text, "html.parser")
+        pub_datetime = parse_news_datetime(soup)
 
-        # 方案1：优先meta description
+        # 优先meta description
         meta_desc = soup.find("meta", attrs={"name":"description"})
         if meta_desc and meta_desc.get("content"):
             summary = clean_text(meta_desc["content"])
             if len(summary) > MAX_SUMMARY_LEN:
                 summary = summary[:MAX_SUMMARY_LEN] + "……"
-            return summary
+            return summary, pub_datetime
 
-        # 方案2：拼接多个正文段落
+        # 兜底：拼接正文段落
         content_text = ""
         all_p = soup.find_all("p")
         for p in all_p:
@@ -94,16 +104,15 @@ def get_article_summary(url):
                 content_text += para + " "
                 if len(content_text) >= MAX_SUMMARY_LEN + 100:
                     break
-
         if len(content_text) > 20:
             if len(content_text) > MAX_SUMMARY_LEN:
                 content_text = content_text[:MAX_SUMMARY_LEN] + "……"
-            return content_text
+            return content_text, pub_datetime
 
-        return "无摘要"
+        return "无摘要", pub_datetime
     except Exception as e:
         print(f"获取摘要失败 {url}: {str(e)}")
-        return "摘要获取失败"
+        return "摘要获取失败", None
 
 def crawl_zaobao():
     base_url = "https://www.zaobao.com.sg"
@@ -111,10 +120,10 @@ def crawl_zaobao():
     news_list = []
     try:
         resp = requests.get(target_url, headers=HEADERS, timeout=PAGE_TIMEOUT)
-        print(f"页面请求状态码：{resp.status_code}")
+        print(f"首页请求状态码：{resp.status_code}")
         soup = BeautifulSoup(resp.text, "html.parser")
         all_a = soup.find_all("a")
-        print(f"页面一共找到<a>标签数量：{len(all_a)}")
+        print(f"页面共找到<a>标签：{len(all_a)}")
         temp_links = []
         seen_link = set()
         for a in all_a:
@@ -124,43 +133,58 @@ def crawl_zaobao():
                 seen_link.add(href)
                 full_url = base_url + href
                 temp_links.append({"title": title, "url": full_url})
-        print(f"宽松筛选得到候选链接数量：{len(temp_links)}")
+        print(f"初步筛选候选链接数量：{len(temp_links)}")
 
         seen = set()
+        deadline = datetime.now() - timedelta(days=NEWS_VALID_DAYS)
         for item in temp_links:
             if is_timeout():
-                print("【警告】整体运行超时，停止抓取更多新闻")
+                print("【警告】运行超时，停止继续抓取")
                 break
             if item["url"] not in seen and len(news_list) < MAX_CRAWL:
                 seen.add(item["url"])
-                summary = get_article_summary(item["url"])
+                summary, pub_time = get_article_summary(item["url"])
+                # 时间过滤：有时间并且早于截止日期则丢弃
+                if pub_time is not None and pub_time < deadline:
+                    print(f"新闻超出时效，舍弃 {item['url']} 发布时间:{pub_time}")
+                    time.sleep(0.4)
+                    continue
                 item["summary"] = summary
-                item["source"] = "联合早报"
+                item["pubtime"] = pub_time
                 news_list.append(item)
                 time.sleep(0.4)
-        print(f"最终组装完成新闻条数：{len(news_list)}")
+        print(f"经过时效筛选后，有效新闻条数：{len(news_list)}")
     except Exception as e:
-        print("联合早报抓取异常：", str(e))
+        print("首页抓取异常：", str(e))
     return news_list
 
 if __name__ == "__main__":
     history_set = load_history()
     raw_news = crawl_zaobao()
 
+    # 过滤已经推送过的新闻
     new_news = []
     new_urls = []
     for item in raw_news:
         if item["url"] not in history_set:
             new_news.append(item)
             new_urls.append(item["url"])
-    print(f"过滤历史后，待推送新增新闻：{len(new_news)} 条")
+    print(f"过滤历史推送记录，待推送新增新闻：{len(new_news)} 条")
+
+    # ========== 核心：按发布时间【从新到旧排序】，pubtime=None放最后 ==========
+    new_news.sort(key=lambda x: x["pubtime"] if x["pubtime"] is not None else datetime.min, reverse=True)
 
     time_now = datetime.now().strftime("%m-%d")
     if len(new_news) > 0:
         msg = f"【联合早报·中国新闻汇总】{time_now}\n\n"
         for n in new_news:
-            # 移除标题，仅摘要+链接
-            block = f"{n['summary']}\n{n['url']}\n\n"
+            # 格式化发布时间
+            if n["pubtime"]:
+                pub_str = n["pubtime"].strftime("%Y-%m-%d %H:%M")
+            else:
+                pub_str = "未知发布时间"
+            block = f"🕒{pub_str}\n{n['summary']}\n{n['url']}\n\n"
+            # 企微消息长度保护
             if len(msg + block) > 1900:
                 msg += "……内容较多，剩余新闻省略"
                 break
