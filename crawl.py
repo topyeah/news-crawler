@@ -17,6 +17,7 @@ MAX_SUMMARY_LEN = 300
 MIN_PARAGRAPH_LEN = 40
 NEWS_VALID_DAYS = 7
 SAFE_MSG_LIMIT = 1600
+HISTORY_KEEP_DAYS = 7   # 历史记录保存天数，到期自动清理
 # ===========================================================
 
 HEADERS = {
@@ -29,26 +30,54 @@ start_time = time.time()
 def is_timeout():
     return time.time() - start_time > TOTAL_RUN_SECONDS
 
-def load_history() -> set:
-    history = set()
+def load_history() -> dict:
+    """返回字典 {url: publish_datetime or None}，并自动清理过期记录"""
+    history = {}
+    cutoff = datetime.now() - timedelta(days=HISTORY_KEEP_DAYS)
     if os.path.exists(HISTORY_FILE):
+        keep_lines = []
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
             for line in f:
-                url = line.strip()
-                if url:
-                    history.add(url)
-        print(f"【加载历史记录】一共 {len(history)} 条已推送链接")
+                line = line.strip()
+                if not line:
+                    continue
+                if "|||" in line:
+                    url, dt_str = line.split("|||", 1)
+                    try:
+                        pub_dt = datetime.fromisoformat(dt_str)
+                        if pub_dt >= cutoff:
+                            history[url] = pub_dt
+                            keep_lines.append(line)
+                    except:
+                        # 时间解析失败，暂时保留
+                        history[url] = None
+                        keep_lines.append(line)
+                else:
+                    # 兼容旧版本纯url记录
+                    url = line
+                    history[url] = None
+                    keep_lines.append(line)
+        # 回写清洗后的历史文件
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            for l in keep_lines:
+                f.write(l + "\n")
+        print(f"【加载历史记录】清洗完成，有效记录 {len(history)} 条")
     else:
         print("【加载历史记录】history.txt 不存在，首次运行")
     return history
 
-def save_new_history(new_url_list: list):
-    if not new_url_list:
+def save_new_history(new_items: list):
+    """new_items: [(url, pub_datetime)]"""
+    if not new_items:
         return
     with open(HISTORY_FILE, "a", encoding="utf-8") as f:
-        for url in new_url_list:
-            f.write(url + "\n")
-    print(f"【保存记录】新增 {len(new_url_list)} 条链接写入history")
+        for url, pub_dt in new_items:
+            if pub_dt is not None:
+                line = f"{url}|||{pub_dt.isoformat()}"
+            else:
+                line = url
+            f.write(line + "\n")
+    print(f"【保存记录】新增 {len(new_items)} 条链接写入history")
 
 def send_wecom_message(content):
     payload = {
@@ -162,16 +191,16 @@ def crawl_zaobao():
     return news_list
 
 if __name__ == "__main__":
-    history_set = load_history()
+    history_dict = load_history()
     raw_news = crawl_zaobao()
 
     new_news = []
-    new_urls = []
+    save_items = []
     for item in raw_news:
-        # 核心：只保留历史记录不存在的新闻
-        if item["url"] not in history_set:
+        url = item["url"]
+        if url not in history_dict:
             new_news.append(item)
-            new_urls.append(item["url"])
+            save_items.append((url, item["pubtime"]))
     print(f"过滤历史推送记录，待推送新增新闻：{len(new_news)} 条")
 
     # 按发布时间从新到旧排序
@@ -194,4 +223,4 @@ if __name__ == "__main__":
         send_wecom_message(f"【联合早报·中国新闻汇总】{time_now}\n暂无新增新闻")
     print("====推送全部完成====")
 
-    save_new_history(new_urls)
+    save_new_history(save_items)
