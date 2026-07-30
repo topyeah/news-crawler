@@ -1,17 +1,24 @@
 name: NewsSpider
 on:
   schedule:
-    - cron: '0 0 * * *'
+    # 北京时间 19:00 → UTC 11:00
+    - cron: '0 11 * * *'
+    # 北京时间 01:00 → UTC 17:00
+    - cron: '0 17 * * *'
+    # 北京时间 07:00 → UTC 23:00
+    - cron: '0 23 * * *'
+    # 北京时间 13:00 → UTC 05:00
+    - cron: '0 5 * * *'
   workflow_dispatch:
 
 jobs:
   spider:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
 
-      - name: 加载缓存
+      - name: 加载缓存历史记录
         uses: actions/cache@v4
         with:
           path: history.txt
@@ -21,7 +28,7 @@ jobs:
         run: pip install requests beautifulsoup4
 
       - name: 执行爬虫
-        run: python3 crawl.py
+        run: python3 main.py
 
       - name: 更新缓存
         uses: actions/cache@v4
