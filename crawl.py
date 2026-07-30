@@ -5,11 +5,14 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import json
 import os
+import time
 
 # =====================【自行修改】=====================
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21cc-4faf-a1b6-e47801d32d0d"
 HISTORY_FILE = "history.txt"
-MAX_CRAWL = 12
+MAX_CRAWL = 8   # 降低条数，减少请求数量，防止长时间运行
+PAGE_TIMEOUT = 12
+TOTAL_RUN_SECONDS = 240  # 整体脚本最长运行4分钟，超时自动终止
 # =====================================================
 
 HEADERS = {
@@ -17,6 +20,11 @@ HEADERS = {
     "Accept-Language": "zh-CN,zh;q=0.9",
     "Connection": "keep-alive"
 }
+start_time = time.time()
+
+def is_timeout():
+    """全局超时判断"""
+    return time.time() - start_time > TOTAL_RUN_SECONDS
 
 def load_history() -> set:
     history = set()
@@ -57,8 +65,10 @@ def send_wecom_message(content):
         print("推送失败：", str(e))
 
 def get_article_summary(url):
+    if is_timeout():
+        return "脚本整体超时，放弃获取摘要"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=12)
+        resp = requests.get(url, headers=HEADERS, timeout=PAGE_TIMEOUT)
         soup = BeautifulSoup(resp.text, "html.parser")
         summary_tag = soup.find("p", class_="article-lead")
         if summary_tag:
@@ -68,7 +78,7 @@ def get_article_summary(url):
             return summary
         return "无摘要"
     except Exception as e:
-        print(f"获取摘要失败 {url}: {e}")
+        print(f"获取摘要失败 {url}: {str(e)}")
         return "摘要获取失败"
 
 def crawl_zaobao():
@@ -76,7 +86,7 @@ def crawl_zaobao():
     target_url = "https://www.zaobao.com.sg/news/china"
     news_list = []
     try:
-        resp = requests.get(target_url, headers=HEADERS, timeout=15)
+        resp = requests.get(target_url, headers=HEADERS, timeout=PAGE_TIMEOUT)
         print(f"页面请求状态码：{resp.status_code}")
         soup = BeautifulSoup(resp.text, "html.parser")
         all_a = soup.find_all("a")
@@ -85,20 +95,24 @@ def crawl_zaobao():
         for a in all_a:
             title = a.get_text(strip=True)
             href = a.get("href","")
-            if len(title) > 12 and "/story/" in href:
+            if len(title) > 12 and ("/story/" in href or "/news/" in href):
                 if not href.startswith("http"):
                     href = base_url + href
                 temp_links.append({"title": title, "url": href})
-        print(f"筛选出带/story/的链接数量：{len(temp_links)}")
+        print(f"筛选出新闻链接数量：{len(temp_links)}")
 
         seen = set()
         for item in temp_links:
+            if is_timeout():
+                print("【警告】整体运行超时，停止抓取更多新闻")
+                break
             if item["url"] not in seen and len(news_list) < MAX_CRAWL:
                 seen.add(item["url"])
                 summary = get_article_summary(item["url"])
                 item["summary"] = summary
                 item["source"] = "联合早报"
                 news_list.append(item)
+                time.sleep(0.4)  # 增加轻微延时，防止高频访问封禁
         print(f"最终组装完成新闻条数：{len(news_list)}")
     except Exception as e:
         print("联合早报抓取异常：", str(e))
