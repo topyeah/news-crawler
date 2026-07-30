@@ -9,8 +9,12 @@ WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21c
 # =========================================================
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-    "Accept-Language": "zh-CN,zh;q=0.9"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate",
+    "Connection": "keep-alive",
+    "Referer": "https://www.zaobao.com.sg/"
 }
 
 def send_wecom_message(content):
@@ -28,12 +32,13 @@ def send_wecom_message(content):
     print("推送接口返回：", res.text)
 
 def test_zaobao():
-    """联合早报抓取，自动补全链接"""
-    print("=====开始测试联合早报=====")
-    base_url = "https://www.zaobao.com"
+    """联合早报 中国新闻栏目"""
+    print("=====开始测试联合早报【中国新闻】=====")
+    base_url = "https://www.zaobao.com.sg"
+    target_url = "https://www.zaobao.com.sg/news/china"
     news_list = []
     try:
-        resp = requests.get(base_url, headers=HEADERS, timeout=15)
+        resp = requests.get(target_url, headers=HEADERS, timeout=15)
         print("早报状态码:", resp.status_code)
         soup = BeautifulSoup(resp.text, "html.parser")
         all_a = soup.find_all("a")
@@ -41,29 +46,30 @@ def test_zaobao():
         for a in all_a:
             title = a.get_text(strip=True)
             href = a.get("href","")
-            # 筛选新闻链接特征
+            # 筛选新闻链接
             if len(title) > 12 and ("/story/" in href or "/news/" in href):
-                # 补全相对路径
                 if not href.startswith("http"):
                     href = base_url + href
                 news_list.append({"source":"联合早报","title":title,"url":href})
         print(f"早报有效新闻数量：{len(news_list)}")
-        for item in news_list[:10]:
-            print(item)
     except Exception as e:
         print("联合早报异常：", str(e))
     return news_list
 
 def test_xmnn():
-    """厦门网，修复中文乱码 + 链接补全"""
+    """厦门网"""
     print("=====开始测试厦门网=====")
     base_url = "https://news.xmnn.cn"
     news_list = []
     try:
-        resp = requests.get(f"{base_url}/xmxw/", headers=HEADERS, timeout=15)
-        # 关键修复：厦门网编码GBK，不要强制utf-8
-        resp.encoding = "gbk"
+        session = requests.Session()
+        resp = session.get(f"{base_url}/xmxw/", headers=HEADERS, timeout=20)
         print("厦门网状态码:", resp.status_code)
+        if resp.status_code == 403:
+            print("警告：厦门网返回403，服务器IP被拦截！")
+            return news_list
+
+        resp.encoding = "gbk"
         soup = BeautifulSoup(resp.text, "html.parser")
         all_li = soup.find_all("li")
         print(f"页面li标签总数：{len(all_li)}")
@@ -74,13 +80,10 @@ def test_xmnn():
             title = a.get_text(strip=True)
             href = a.get("href","")
             if len(title) > 8:
-                # 补全相对链接
                 if not href.startswith("http"):
                     href = base_url + href
                 news_list.append({"source":"厦门网","title": title, "url": href})
         print(f"厦门网有效新闻数量：{len(news_list)}")
-        for item in news_list[:10]:
-            print(item)
     except Exception as e:
         print("厦门网异常：", str(e))
     return news_list
