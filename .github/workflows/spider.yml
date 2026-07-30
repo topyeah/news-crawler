@@ -1,0 +1,31 @@
+name: NewsSpider
+on:
+  schedule:
+    # UTC时间！北京时间=UTC+8
+    # 北京时间早上8:00 → UTC 00:00
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 支持手动运行
+
+jobs:
+  spider:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 加载缓存（保存history.txt）
+        uses: actions/cache@v4
+        with:
+          path: history.txt
+          key: news-history-cache
+
+      - name: 安装Python依赖
+        run: pip install requests beautifulsoup4
+
+      - name: 执行爬虫
+        run: python3 crawl.py
+
+      - name: 更新缓存
+        uses: actions/cache@v4
+        with:
+          path: history.txt
+          key: news-history-cache
