@@ -7,7 +7,7 @@ import json
 import os
 import time
 import traceback
-import cchardet
+import chardet
 
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21cc-4faf-a1b6-e47801d32d0d"
 HISTORY_FILE = "history.txt"
@@ -85,7 +85,7 @@ def clean_text(text):
     if not text:
         return ""
     text = re.sub(r"\s+"," ",text.strip())
-    # 过滤不可见特殊字符，减少乱码展示
+    # 清除不可见控制字符，防止乱码
     text = re.sub(r"[\x00-\x1F\x7F]", "", text)
     return text
 
@@ -107,18 +107,18 @@ def get_detail(url):
     for attempt in range(RETRY_TIMES + 1):
         try:
             r = requests.get(url,headers=HEADERS,timeout=PAGE_TIMEOUT)
-            # 自动识别页面编码，解决乱码核心方案
-            encoding_info = cchardet.detect(r.content)
-            encode = encoding_info["encoding"]
+            # chardet自动识别编码
+            encode_result = chardet.detect(r.content)
+            encode = encode_result["encoding"]
             if encode:
                 r.encoding = encode
             soup = BeautifulSoup(r.text,"html.parser")
             pub_time = parse_pubtime(soup)
-            # 优先og摘要
+            # 优先og:description
             og_desc = soup.find("meta", property="og:description")
             if og_desc:
                 summary = clean_text(og_desc["content"])
-            # 其次description
+            # 备选meta description
             if not summary:
                 meta_desc = soup.find("meta", name="description")
                 if meta_desc:
@@ -137,9 +137,9 @@ def crawl():
     news = []
     try:
         r = requests.get(target,headers=HEADERS,timeout=8)
-        encoding_info = cchardet.detect(r.content)
-        if encoding_info["encoding"]:
-            r.encoding = encoding_info["encoding"]
+        encode_result = chardet.detect(r.content)
+        if encode_result["encoding"]:
+            r.encoding = encode_result["encoding"]
         soup = BeautifulSoup(r.text,"html.parser")
         links_set = set()
         links = []
