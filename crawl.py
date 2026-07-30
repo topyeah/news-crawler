@@ -11,7 +11,7 @@ import time
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21cc-4faf-a1b6-e47801d32d0d"
 HISTORY_FILE = "history.txt"
 MAX_CRAWL = 20
-PAGE_TIMEOUT = 6       # 缩短超时，避免长时间卡死
+PAGE_TIMEOUT = 6
 TOTAL_RUN_SECONDS = 220
 MAX_SUMMARY_LEN = 300
 MIN_PARAGRAPH_LEN = 40
@@ -39,7 +39,7 @@ def load_history() -> set:
                     history.add(url)
         print(f"【加载历史记录】一共 {len(history)} 条已推送链接")
     else:
-        print("【加载历史记录】history.txt 不存在")
+        print("【加载历史记录】history.txt 不存在，首次运行")
     return history
 
 def save_new_history(new_url_list: list):
@@ -81,7 +81,7 @@ def parse_news_datetime(soup):
             pure_dt_str = dt_str.replace("Z","").split("+")[0]
             pub_dt = datetime.fromisoformat(pure_dt_str)
             return pub_dt
-        except Exception as e:
+        except Exception:
             return None
     return None
 
@@ -168,6 +168,7 @@ if __name__ == "__main__":
     new_news = []
     new_urls = []
     for item in raw_news:
+        # 核心：只保留历史记录不存在的新闻
         if item["url"] not in history_set:
             new_news.append(item)
             new_urls.append(item["url"])
