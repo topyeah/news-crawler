@@ -18,6 +18,7 @@ MIN_PARAGRAPH_LEN = 40
 NEWS_VALID_DAYS = 7
 SAFE_MSG_LIMIT = 1600
 HISTORY_KEEP_DAYS = 7
+RETRY_TIMES = 2  # 详情抓取重试次数
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -92,23 +93,25 @@ def parse_pubtime(soup):
 
 def get_detail(url):
     if is_timeout():
-        return "超时放弃",None
-    try:
-        r = requests.get(url,headers=HEADERS,timeout=PAGE_TIMEOUT)
-        soup = BeautifulSoup(r.text,"html.parser")
-        t = parse_pubtime(soup)
-        desc = soup.find("meta",name="description")
-        summary = ""
-        if desc:
-            summary = clean_text(desc["content"])
-        if len(summary) > MAX_SUMMARY_LEN:
-            summary = summary[:MAX_SUMMARY_LEN]+"……"
-        if not summary:
-            summary = "无摘要"
-        return summary,t
-    except Exception as e:
-        print("页面访问失败",url,str(e))
-        return "摘要获取失败",None
+        return "", None
+    summary = ""
+    pub_time = None
+    # 重试逻辑
+    for attempt in range(RETRY_TIMES + 1):
+        try:
+            r = requests.get(url,headers=HEADERS,timeout=PAGE_TIMEOUT)
+            soup = BeautifulSoup(r.text,"html.parser")
+            pub_time = parse_pubtime(soup)
+            desc = soup.find("meta",name="description")
+            if desc:
+                summary = clean_text(desc["content"])
+            if len(summary) > MAX_SUMMARY_LEN:
+                summary = summary[:MAX_SUMMARY_LEN]+"……"
+            break
+        except Exception as e:
+            print(f"抓取尝试{attempt+1}失败 {url}：{str(e)}")
+            time.sleep(0.5)
+    return summary, pub_time
 
 def crawl():
     base = "https://www.zaobao.com.sg"
@@ -161,7 +164,11 @@ def main():
     if new_list:
         batch = header
         for n in new_list:
-            block = f"{n['summary']}\n{n['url']}\n\n"
+            # 摘要为空只输出链接，不再显示失败文字
+            if n["summary"]:
+                block = f"{n['summary']}\n{n['url']}\n\n"
+            else:
+                block = f"{n['url']}\n\n"
             if len(batch+block) > SAFE_MSG_LIMIT:
                 send_wecom(batch)
                 batch = header
