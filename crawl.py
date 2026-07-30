@@ -17,7 +17,7 @@ MAX_SUMMARY_LEN = 300
 MIN_PARAGRAPH_LEN = 40
 NEWS_VALID_DAYS = 7
 SAFE_MSG_LIMIT = 1600
-HISTORY_KEEP_DAYS = 7   # 历史记录保存天数，到期自动清理
+HISTORY_KEEP_DAYS = 7
 # ===========================================================
 
 HEADERS = {
@@ -31,7 +31,6 @@ def is_timeout():
     return time.time() - start_time > TOTAL_RUN_SECONDS
 
 def load_history() -> dict:
-    """返回字典 {url: publish_datetime or None}，并自动清理过期记录"""
     history = {}
     cutoff = datetime.now() - timedelta(days=HISTORY_KEEP_DAYS)
     if os.path.exists(HISTORY_FILE):
@@ -48,16 +47,13 @@ def load_history() -> dict:
                         if pub_dt >= cutoff:
                             history[url] = pub_dt
                             keep_lines.append(line)
-                    except:
-                        # 时间解析失败，暂时保留
+                    except Exception:
                         history[url] = None
                         keep_lines.append(line)
                 else:
-                    # 兼容旧版本纯url记录
                     url = line
                     history[url] = None
                     keep_lines.append(line)
-        # 回写清洗后的历史文件
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
             for l in keep_lines:
                 f.write(l + "\n")
@@ -67,7 +63,6 @@ def load_history() -> dict:
     return history
 
 def save_new_history(new_items: list):
-    """new_items: [(url, pub_datetime)]"""
     if not new_items:
         return
     with open(HISTORY_FILE, "a", encoding="utf-8") as f:
@@ -203,7 +198,6 @@ if __name__ == "__main__":
             save_items.append((url, item["pubtime"]))
     print(f"过滤历史推送记录，待推送新增新闻：{len(new_news)} 条")
 
-    # 按发布时间从新到旧排序
     new_news.sort(key=lambda x: x["pubtime"] if x["pubtime"] is not None else datetime.min, reverse=True)
 
     time_now = datetime.now().strftime("%m-%d")
