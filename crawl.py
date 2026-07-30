@@ -13,6 +13,8 @@ HISTORY_FILE = "history.txt"
 MAX_CRAWL = 8
 PAGE_TIMEOUT = 12
 TOTAL_RUN_SECONDS = 240
+MAX_SUMMARY_LEN = 260  # 调长摘要上限
+MIN_PARAGRAPH_LEN = 40 # 提高最低段落长度，过滤短句
 # =====================================================
 
 HEADERS = {
@@ -64,32 +66,33 @@ def send_wecom_message(content):
         print("推送失败：", str(e))
 
 def get_article_summary(url):
-    """
-    新逻辑：优先meta description，兜底正文首段
-    不再依赖废弃的 article-lead
-    """
     if is_timeout():
         return "脚本整体超时，放弃获取摘要"
     try:
         resp = requests.get(url, headers=HEADERS, timeout=PAGE_TIMEOUT)
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # 方案1：优先抓取meta描述（网站官方摘要，稳定性最强）
+        # 方案1：优先meta description
         meta_desc = soup.find("meta", attrs={"name":"description"})
         if meta_desc and meta_desc.get("content"):
             summary = meta_desc["content"].strip()
-            if len(summary) > 160:
-                summary = summary[:160] + "……"
+            if len(summary) > MAX_SUMMARY_LEN:
+                summary = summary[:MAX_SUMMARY_LEN] + "……"
             return summary
 
-        # 方案2：兜底，抓取页面第一个正文段落
+        # 方案2：正文筛选，优先更长的段落
+        candidate_texts = []
         all_p = soup.find_all("p")
         for p in all_p:
             text = p.get_text(strip=True)
-            if len(text) > 30:
-                if len(text) > 160:
-                    text = text[:160] + "……"
-                return text
+            if len(text) >= MIN_PARAGRAPH_LEN:
+                candidate_texts.append(text)
+        # 选取最长的一段正文作为摘要
+        if candidate_texts:
+            best_text = max(candidate_texts, key=len)
+            if len(best_text) > MAX_SUMMARY_LEN:
+                best_text = best_text[:MAX_SUMMARY_LEN] + "……"
+            return best_text
 
         return "无摘要"
     except Exception as e:
@@ -107,14 +110,15 @@ def crawl_zaobao():
         all_a = soup.find_all("a")
         print(f"页面一共找到<a>标签数量：{len(all_a)}")
         temp_links = []
+        seen_link = set()
         for a in all_a:
             title = a.get_text(strip=True)
             href = a.get("href","")
-            if len(title) > 12 and ("/story/" in href or "/news/" in href):
-                if not href.startswith("http"):
-                    href = base_url + href
-                temp_links.append({"title": title, "url": href})
-        print(f"筛选出新闻链接数量：{len(temp_links)}")
+            if len(title) >= 15 and href.startswith("/") and href not in seen_link:
+                seen_link.add(href)
+                full_url = base_url + href
+                temp_links.append({"title": title, "url": full_url})
+        print(f"宽松筛选得到候选链接数量：{len(temp_links)}")
 
         seen = set()
         for item in temp_links:
