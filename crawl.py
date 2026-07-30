@@ -9,7 +9,7 @@ import os
 # =====================【自行修改】=====================
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21cc-4faf-a1b6-e47801d32d0d"
 HISTORY_FILE = "history.txt"
-MAX_CRAWL = 12  # 最多抓取多少条新闻，防止请求过多被封
+MAX_CRAWL = 12
 # =====================================================
 
 HEADERS = {
@@ -26,6 +26,9 @@ def load_history() -> set:
                 url = line.strip()
                 if url:
                     history.add(url)
+        print(f"【加载历史记录】一共 {len(history)} 条已推送链接")
+    else:
+        print("【加载历史记录】history.txt 不存在，历史为空")
     return history
 
 def save_new_history(new_url_list: list):
@@ -34,6 +37,7 @@ def save_new_history(new_url_list: list):
     with open(HISTORY_FILE, "a", encoding="utf-8") as f:
         for url in new_url_list:
             f.write(url + "\n")
+    print(f"【保存记录】新增 {len(new_url_list)} 条链接写入history")
 
 def send_wecom_message(content):
     payload = {
@@ -53,15 +57,12 @@ def send_wecom_message(content):
         print("推送失败：", str(e))
 
 def get_article_summary(url):
-    """访问新闻详情页，提取摘要"""
     try:
         resp = requests.get(url, headers=HEADERS, timeout=12)
         soup = BeautifulSoup(resp.text, "html.parser")
-        # 联合早报摘要所在标签
         summary_tag = soup.find("p", class_="article-lead")
         if summary_tag:
             summary = summary_tag.get_text(strip=True)
-            # 摘要长度限制，避免消息过长
             if len(summary) > 160:
                 summary = summary[:160] + "……"
             return summary
@@ -76,8 +77,10 @@ def crawl_zaobao():
     news_list = []
     try:
         resp = requests.get(target_url, headers=HEADERS, timeout=15)
+        print(f"页面请求状态码：{resp.status_code}")
         soup = BeautifulSoup(resp.text, "html.parser")
         all_a = soup.find_all("a")
+        print(f"页面一共找到<a>标签数量：{len(all_a)}")
         temp_links = []
         for a in all_a:
             title = a.get_text(strip=True)
@@ -86,17 +89,17 @@ def crawl_zaobao():
                 if not href.startswith("http"):
                     href = base_url + href
                 temp_links.append({"title": title, "url": href})
-        # 去重链接，限制数量
+        print(f"筛选出带/story/的链接数量：{len(temp_links)}")
+
         seen = set()
         for item in temp_links:
             if item["url"] not in seen and len(news_list) < MAX_CRAWL:
                 seen.add(item["url"])
-                # 进入详情页抓取摘要
                 summary = get_article_summary(item["url"])
                 item["summary"] = summary
                 item["source"] = "联合早报"
                 news_list.append(item)
-        print(f"成功抓取新闻数量：{len(news_list)}")
+        print(f"最终组装完成新闻条数：{len(news_list)}")
     except Exception as e:
         print("联合早报抓取异常：", str(e))
     return news_list
@@ -111,13 +114,13 @@ if __name__ == "__main__":
         if item["url"] not in history_set:
             new_news.append(item)
             new_urls.append(item["url"])
+    print(f"过滤历史后，待推送新增新闻：{len(new_news)} 条")
 
     time_now = datetime.now().strftime("%m-%d")
     if len(new_news) > 0:
         msg = f"【联合早报·中国新闻汇总】{time_now}\n\n"
         for n in new_news:
             block = f"【{n['title']}】\n{n['summary']}\n{n['url']}\n\n"
-            # 企微消息长度保护
             if len(msg + block) > 1900:
                 msg += "内容较多，剩余新闻省略"
                 break
