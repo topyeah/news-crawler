@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 import json
 import os
 import time
+import traceback
+import cchardet
 
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21cc-4faf-a1b6-e47801d32d0d"
 HISTORY_FILE = "history.txt"
@@ -17,15 +19,27 @@ MIN_PARAGRAPH_LEN = 40
 NEWS_VALID_DAYS = 7
 SAFE_MSG_LIMIT = 1600
 HISTORY_KEEP_DAYS = 7
+RETRY_TIMES = 2
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept-Language": "zh-CN,zh;q=0.9"
+    "Accept-Language": "zh-CN,zh;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 }
 start_time = time.time()
 
 def is_timeout():
     return time.time() - start_time > TOTAL_RUN_SECONDS
+
+def send_wecom(content):
+    payload = {"msgtype":"text","text":{"content":content}}
+    try:
+        res = requests.post(WEBHOOK_URL, data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),
+                            headers={"Content-Type":"application/json"}, timeout=10)
+        print("推送结果:",res.status_code,res.text)
+        time.sleep(0.6)
+    except Exception as e:
+        print("推送异常",str(e))
 
 def load_history():
     history = {}
@@ -67,17 +81,13 @@ def save_new_history(new_items):
                 f.write(url+"\n")
     print(f"新增记录写入:{len(new_items)}条")
 
-def send_wecom(content):
-    payload = {"msgtype":"text","text":{"content":content}}
-    try:
-        res = requests.post(WEBHOOK_URL, data=json.dumps(payload,ensure_ascii=False).encode(), headers={"Content-Type":"application/json"}, timeout=10)
-        print("推送结果:",res.status_code,res.text)
-        time.sleep(0.6)
-    except Exception as e:
-        print("推送异常",str(e))
-
 def clean_text(text):
-    return re.sub(r"\s+"," ",text.strip())
+    if not text:
+        return ""
+    text = re.sub(r"\s+"," ",text.strip())
+    # 过滤不可见特殊字符，减少乱码展示
+    text = re.sub(r"[\x00-\x1F\x7F]", "", text)
+    return text
 
 def parse_pubtime(soup):
     tag = soup.find("meta",property="article:published_time")
@@ -91,23 +101,35 @@ def parse_pubtime(soup):
 
 def get_detail(url):
     if is_timeout():
-        return "超时放弃",None
-    try:
-        r = requests.get(url,headers=HEADERS,timeout=PAGE_TIMEOUT)
-        soup = BeautifulSoup(r.text,"html.parser")
-        t = parse_pubtime(soup)
-        desc = soup.find("meta",name="description")
-        summary = ""
-        if desc:
-            summary = clean_text(desc["content"])
-        if len(summary) > MAX_SUMMARY_LEN:
-            summary = summary[:MAX_SUMMARY_LEN]+"……"
-        if not summary:
-            summary = "无摘要"
-        return summary,t
-    except Exception as e:
-        print("页面访问失败",url,str(e))
-        return "摘要获取失败",None
+        return "", None
+    summary = ""
+    pub_time = None
+    for attempt in range(RETRY_TIMES + 1):
+        try:
+            r = requests.get(url,headers=HEADERS,timeout=PAGE_TIMEOUT)
+            # 自动识别页面编码，解决乱码核心方案
+            encoding_info = cchardet.detect(r.content)
+            encode = encoding_info["encoding"]
+            if encode:
+                r.encoding = encode
+            soup = BeautifulSoup(r.text,"html.parser")
+            pub_time = parse_pubtime(soup)
+            # 优先og摘要
+            og_desc = soup.find("meta", property="og:description")
+            if og_desc:
+                summary = clean_text(og_desc["content"])
+            # 其次description
+            if not summary:
+                meta_desc = soup.find("meta", name="description")
+                if meta_desc:
+                    summary = clean_text(meta_desc["content"])
+            if len(summary) > MAX_SUMMARY_LEN:
+                summary = summary[:MAX_SUMMARY_LEN]+"……"
+            break
+        except Exception as e:
+            print(f"抓取尝试{attempt+1}失败 {url}：{str(e)}")
+            time.sleep(0.5)
+    return summary, pub_time
 
 def crawl():
     base = "https://www.zaobao.com.sg"
@@ -115,6 +137,9 @@ def crawl():
     news = []
     try:
         r = requests.get(target,headers=HEADERS,timeout=8)
+        encoding_info = cchardet.detect(r.content)
+        if encoding_info["encoding"]:
+            r.encoding = encoding_info["encoding"]
         soup = BeautifulSoup(r.text,"html.parser")
         links_set = set()
         links = []
@@ -145,7 +170,7 @@ def crawl():
     print("有效新闻总数:",len(news))
     return news
 
-if __name__ == "__main__":
+def main():
     history = load_history()
     raw = crawl()
     new_list = []
@@ -160,7 +185,10 @@ if __name__ == "__main__":
     if new_list:
         batch = header
         for n in new_list:
-            block = f"{n['summary']}\n{n['url']}\n\n"
+            block = ""
+            if n["summary"]:
+                block += f"{n['summary']}\n"
+            block += f"{n['url']}\n\n"
             if len(batch+block) > SAFE_MSG_LIMIT:
                 send_wecom(batch)
                 batch = header
@@ -169,3 +197,12 @@ if __name__ == "__main__":
     else:
         send_wecom(f"{header}暂无新增新闻")
     save_new_history(save_list)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as err:
+        err_info = traceback.format_exc()
+        alert_msg = f"⚠️联合早报爬虫运行异常！\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n错误信息：{str(err)}\n详情：{err_info[:800]}"
+        send_wecom(alert_msg)
+        raise
