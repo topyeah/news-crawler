@@ -7,24 +7,11 @@ on:
 jobs:
   crawl_job:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # 允许action提交文件到仓库（必须！）
     steps:
       - uses: actions/checkout@v5
-        with:
-          persist-credentials: true
 
       - name: Install dependencies
         run: pip3 install requests beautifulsoup4
 
       - name: Run crawl script
         run: python3 crawl.py
-
-      # 自动提交更新后的history.txt
-      - name: Commit history file
-        run: |
-          git config --global user.name "NewsBot"
-          git config --global user.email "bot@example.com"
-          git add history.txt
-          git diff --quiet && git diff --staged --quiet || git commit -m "Update pushed news history"
-          git push
