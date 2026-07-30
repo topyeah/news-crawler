@@ -13,7 +13,7 @@ HISTORY_FILE = "history.txt"
 MAX_CRAWL = 8
 PAGE_TIMEOUT = 12
 TOTAL_RUN_SECONDS = 240
-MAX_SUMMARY_LEN = 600
+MAX_SUMMARY_LEN = 300   # 调整为最多300字符
 MIN_PARAGRAPH_LEN = 40
 # =====================================================
 
@@ -159,7 +159,7 @@ if __name__ == "__main__":
     if len(new_news) > 0:
         msg = f"【联合早报·中国新闻汇总】{time_now}\n\n"
         for n in new_news:
-            # 已移除标题，只保留摘要+链接
+            # 移除标题，仅摘要+链接
             block = f"{n['summary']}\n{n['url']}\n\n"
             if len(msg + block) > 1900:
                 msg += "……内容较多，剩余新闻省略"
