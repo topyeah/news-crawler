@@ -13,8 +13,8 @@ HISTORY_FILE = "history.txt"
 MAX_CRAWL = 8
 PAGE_TIMEOUT = 12
 TOTAL_RUN_SECONDS = 240
-MAX_SUMMARY_LEN = 260  # 调长摘要上限
-MIN_PARAGRAPH_LEN = 40 # 提高最低段落长度，过滤短句
+MAX_SUMMARY_LEN = 600    # 修改为600字符
+MIN_PARAGRAPH_LEN = 40
 # =====================================================
 
 HEADERS = {
@@ -65,6 +65,11 @@ def send_wecom_message(content):
     except Exception as e:
         print("推送失败：", str(e))
 
+def clean_text(text: str) -> str:
+    """清洗文本：去除多余空格、换行"""
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
 def get_article_summary(url):
     if is_timeout():
         return "脚本整体超时，放弃获取摘要"
@@ -75,24 +80,27 @@ def get_article_summary(url):
         # 方案1：优先meta description
         meta_desc = soup.find("meta", attrs={"name":"description"})
         if meta_desc and meta_desc.get("content"):
-            summary = meta_desc["content"].strip()
+            summary = clean_text(meta_desc["content"])
             if len(summary) > MAX_SUMMARY_LEN:
                 summary = summary[:MAX_SUMMARY_LEN] + "……"
             return summary
 
-        # 方案2：正文筛选，优先更长的段落
-        candidate_texts = []
+        # 方案2：拼接多个正文段落（优化升级：不再只取单段）
+        content_text = ""
         all_p = soup.find_all("p")
         for p in all_p:
-            text = p.get_text(strip=True)
-            if len(text) >= MIN_PARAGRAPH_LEN:
-                candidate_texts.append(text)
-        # 选取最长的一段正文作为摘要
-        if candidate_texts:
-            best_text = max(candidate_texts, key=len)
-            if len(best_text) > MAX_SUMMARY_LEN:
-                best_text = best_text[:MAX_SUMMARY_LEN] + "……"
-            return best_text
+            para = clean_text(p.get_text())
+            # 过滤过短无效段落
+            if len(para) >= MIN_PARAGRAPH_LEN:
+                content_text += para + " "
+                # 提前终止，避免抓取过多内容
+                if len(content_text) >= MAX_SUMMARY_LEN + 100:
+                    break
+
+        if len(content_text) > 20:
+            if len(content_text) > MAX_SUMMARY_LEN:
+                content_text = content_text[:MAX_SUMMARY_LEN] + "……"
+            return content_text
 
         return "无摘要"
     except Exception as e:
@@ -112,7 +120,7 @@ def crawl_zaobao():
         temp_links = []
         seen_link = set()
         for a in all_a:
-            title = a.get_text(strip=True)
+            title = clean_text(a.get_text())
             href = a.get("href","")
             if len(title) >= 15 and href.startswith("/") and href not in seen_link:
                 seen_link.add(href)
@@ -154,8 +162,9 @@ if __name__ == "__main__":
         msg = f"【联合早报·中国新闻汇总】{time_now}\n\n"
         for n in new_news:
             block = f"【{n['title']}】\n{n['summary']}\n{n['url']}\n\n"
+            # 企微消息总长度保护阈值
             if len(msg + block) > 1900:
-                msg += "内容较多，剩余新闻省略"
+                msg += "……内容较多，剩余新闻省略"
                 break
             msg += block
     else:
