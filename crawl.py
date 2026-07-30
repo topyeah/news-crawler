@@ -8,7 +8,7 @@ import os
 import time
 
 # =====================【自行修改配置区】=====================
-WEBHOOK_URL = "填入企业微信机器人webhook"
+WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=e37d0ea8-21cc-4faf-a1b6-e47801d32d0d"
 HISTORY_FILE = "history.txt"
 MAX_CRAWL = 8
 PAGE_TIMEOUT = 12
